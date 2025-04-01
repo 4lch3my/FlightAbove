@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Closest Airplane Tracker</title>
+
+    <style>
+        /* Basic Reset */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* Dark Mode Theme */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a; /* Dark background */
+            color: #e0e0e0; /* Light text */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: #2b2b2b; /* Slightly lighter dark shade for container */
+            padding: 30px 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            max-width: 500px;
+            width: 90%;
+        }
+
+        h1 {
+            margin-bottom: 25px;
+            color: #ffffff; /* White heading */
+            font-weight: 600;
+        }
+
+        button#findButton {
+            background-color: #007bff; /* A bright color for the button */
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            margin-bottom: 25px;
+            font-weight: 500;
+        }
+
+        button#findButton:hover {
+            background-color: #0056b3; /* Darker shade on hover */
+        }
+
+        button#findButton:active {
+            transform: scale(0.98); /* Slight shrink effect on click */
+        }
+
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #333333; /* Dark background for results */
+            border-radius: 5px;
+            min-height: 50px; /* Ensure it has some height initially */
+            line-height: 1.6;
+            text-align: left; /* Align text left within the result box */
+        }
+
+        #result h2 {
+            text-align: center; /* Center the result heading */
+            margin-bottom: 15px;
+             color: #bb86fc;
+        }
+
+        #result p {
+            margin: 8px 0; /* More spacing for readability */
+        }
+
+        #result strong {
+            color: #a7d1ff; /* Slightly different highlight color */
+            display: inline-block;
+            min-width: 100px; /* Align labels somewhat */
+        }
+
+        #result small {
+             display: block; /* Put coordinates on new line */
+             text-align: center;
+             margin-top: 10px;
+             color: #aaa; /* Dimmer color for coordinates */
+        }
+
+        .error-message {
+            color: #cf6679; /* Error color (often reddish in dark themes) */
+            margin-top: 15px;
+            font-weight: bold;
+            min-height: 1.2em; /* Reserve space even when empty */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Closest Airplane Tracker</h1>
+        <button id="findButton">Find Closest Airplane</button>
+        <div id="result">
+            <p>Press the button to find the nearest aircraft.</p>
+        </div>
+        <div id="error" class="error-message"></div>
+    </div>
+
+    <script>
+        const findButton = document.getElementById('findButton');
+        const resultDiv = document.getElementById('result');
+        const errorDiv = document.getElementById('error');
+
+        findButton.addEventListener('click', getUserLocation);
+
+        function getUserLocation() {
+            resultDiv.innerHTML = '<p>Getting your location...</p>';
+            errorDiv.textContent = ''; // Clear previous errors
+
+            if (!navigator.geolocation) {
+                showError('Geolocation is not supported by your browser.');
+                resultDiv.innerHTML = '<p>Cannot get location.</p>';
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                fetchFlightData,      // Success callback
+                handleLocationError,  // Error callback
+                { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 } // Options
+            );
+        }
+
+        function handleLocationError(error) {
+            let message = 'An unknown error occurred while getting location.';
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    message = 'Location permission denied. Please enable location access in your browser settings.';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message = 'Location information is unavailable.';
+                    break;
+                case error.TIMEOUT:
+                    message = 'The request to get user location timed out.';
+                    break;
+            }
+            showError(message);
+            resultDiv.innerHTML = '<p>Could not get location.</p>';
+        }
+
+        async function fetchFlightData(position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            resultDiv.innerHTML = `<p>Location found (approx): ${lat.toFixed(4)}, ${lon.toFixed(4)}. Fetching flight data...</p>`;
+
+            // Define a bounding box around the user's location (e.g., approx 1 degree ~ 111km)
+            // You might adjust the size (e.g., 0.5 for ~55km radius, 1.0 for ~111km radius)
+            const rangeDegrees = 0.75; // Search within ~83km radius
+            const latMin = lat - rangeDegrees;
+            const latMax = lat + rangeDegrees;
+            const lonMin = lon - rangeDegrees;
+            const lonMax = lon + rangeDegrees;
+
+            // OpenSky Network API endpoint
+            const apiUrl = `https://opensky-network.org/api/states/all?lamin=${latMin}&lomin=${lonMin}&lamax=${latMax}&lomax=${lonMax}`;
+
+            try {
+                // Added a simple timeout mechanism for the fetch request
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 seconds timeout
+
+                const response = await fetch(apiUrl, { signal: controller.signal });
+                clearTimeout(timeoutId); // Clear the timeout if fetch completes in time
+
+                if (!response.ok) {
+                    // Try to get more specific error from OpenSky if possible
+                     let errorText = `${response.status} ${response.statusText}`;
+                     try {
+                         const errorData = await response.json();
+                         if(errorData.message) errorText += `: ${errorData.message}`;
+                     } catch (e) { /* Ignore if response body is not JSON */ }
+                     throw new Error(`API Error: ${errorText}`);
+                }
+
+                const data = await response.json();
+
+                if (data.time === 0 || !data.states || data.states.length === 0) {
+                    resultDiv.innerHTML = '<p>No aircraft found nearby in the OpenSky Network data for your area.</p>';
+                    return;
+                }
+
+                findClosestFlight(data.states, lat, lon);
+
+            } catch (error) {
+                console.error("Fetch Error:", error);
+                if (error.name === 'AbortError') {
+                     showError('Failed to fetch flight data: The request timed out.');
+                } else {
+                    showError(`Failed to fetch flight data: ${error.message}`);
+                }
+                resultDiv.innerHTML = '<p>Could not retrieve flight information.</p>';
+            }
+        }
+
+        function findClosestFlight(flights, userLat, userLon) {
+            let closestFlight = null;
+            let minDistance = Infinity;
+
+            // State vector indices from OpenSky API documentation:
+            // 0: icao24, 1: callsign, 2: origin_country, 3: time_position, 4: last_contact,
+            // 5: longitude, 6: latitude, 7: baro_altitude, 8: on_ground, 9: velocity,
+            // 10: true_track, 11: vertical_rate, 12: sensors, 13: geo_altitude,
+            // 14: squawk, 15: spi, 16: position_source
+
+            flights.forEach(state => {
+                const flightLat = state[6];
+                const flightLon = state[5];
+                const onGround = state[8];
+                const callsign = state[1]?.trim() || 'N/A'; // Get callsign, trim whitespace
+
+                // Skip if essential data is missing or if the aircraft is on the ground
+                // Also skip if lat/lon appear invalid (e.g. exactly 0) although OpenSky usually filters these
+                if (flightLat == null || flightLon == null || onGround || flightLat === 0 || flightLon === 0) {
+                    return;
+                }
+
+                const distance = calculateDistance(userLat, userLon, flightLat, flightLon);
+
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestFlight = {
+                        icao24: state[0],
+                        callsign: callsign,
+                        latitude: flightLat,
+                        longitude: flightLon,
+                        altitude: state[7] ?? state[13], // Prefer barometric, fallback to geometric (meters)
+                        originCountry: state[2],
+                        velocity: state[9], // meters/second
+                        heading: state[10], // degrees from North
+                        verticalRate: state[11] // meters/second
+                    };
+                }
+            });
+
+            displayResult(closestFlight, minDistance);
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Radius of the Earth in km
+            const dLat = deg2rad(lat2 - lat1);
+            const dLon = deg2rad(lon2 - lon1);
+            const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c; // Distance in km
+            return distance;
+        }
+
+        function deg2rad(deg) {
+            return deg * (Math.PI / 180);
+        }
+
+        function displayResult(flight, distance) {
+             errorDiv.textContent = ''; // Clear errors on successful display
+            if (flight) {
+                const altitudeM = flight.altitude;
+                const altitudeFt = altitudeM ? Math.round(altitudeM * 3.28084) : 'N/A';
+                const velocityKmh = flight.velocity ? Math.round(flight.velocity * 3.6) : 'N/A';
+                const velocityMph = flight.velocity ? Math.round(flight.velocity * 2.23694) : 'N/A';
+                const heading = flight.heading !== null ? `${Math.round(flight.heading)}°` : 'N/A';
+                const verticalRateFPM = flight.verticalRate ? Math.round(flight.verticalRate * 196.85) : 0; // feet per minute
+
+                let verticalDesc = 'Level';
+                if (verticalRateFPM > 100) { // Threshold for climb/descent
+                    verticalDesc = `Climbing (${verticalRateFPM} fpm)`;
+                } else if (verticalRateFPM < -100) {
+                    verticalDesc = `Descending (${verticalRateFPM} fpm)`;
+                }
+
+
+                resultDiv.innerHTML = `
+                    <h2>Closest Aircraft Found!</h2>
+                    <p><strong>Callsign:</strong> ${flight.callsign}</p>
+                    <p><strong>Origin:</strong> ${flight.originCountry}</p>
+                    <p><strong>Distance:</strong> ${distance.toFixed(2)} km (${(distance * 0.621371).toFixed(2)} miles)</p>
+                    <p><strong>Altitude:</strong> ${altitudeFt} ft (${altitudeM ? altitudeM.toFixed(0) + ' m' : 'N/A'})</p>
+                    <p><strong>Status:</strong> ${verticalDesc}</p>
+                    <p><strong>Ground Spd:</strong> ${velocityKmh} km/h (${velocityMph} mph)</p>
+                    <p><strong>Heading:</strong> ${heading}</p>
+                    <p><strong>ICAO24:</strong> ${flight.icao24}</p>
+                    <p><small>(Aircraft Pos: ${flight.latitude.toFixed(4)}, ${flight.longitude.toFixed(4)})</small></p>
+                `;
+            } else {
+                resultDiv.innerHTML = '<p>Could not determine the closest aircraft based on available data in the specified range.</p>';
+            }
+        }
+
+        function showError(message) {
+            errorDiv.textContent = message;
+        }
+    </script>
+
+</body>
+</html>
